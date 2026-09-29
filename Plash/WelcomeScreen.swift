@@ -16,7 +16,7 @@ extension AppState {
 
 				Use “Browsing Mode” if you need to log into a website or interact with it in some way.
 
-				Note: Support for multiple displays is currently limited to the ability to choose which display to show the website on.
+				With multiple displays, each display can show a different website. Right-click a website in the “Websites” window and choose “Show On”.
 				""",
 			buttonTitles: [
 				"Continue"

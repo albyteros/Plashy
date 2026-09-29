@@ -5,6 +5,11 @@ final class SSWebView: WKWebView {
 
 	private var cancellables = Set<AnyCancellable>()
 
+	/**
+	The website this web view was created for.
+	*/
+	var website: Website?
+
 	private var excludedMenuItems: Set<MenuItemIdentifier> = [
 		.downloadImage,
 		.downloadLinkedFile,
@@ -92,7 +97,7 @@ final class SSWebView: WKWebView {
 		menu.addSeparator()
 
 		if
-			let website = WebsitesController.shared.current,
+			let website,
 			let url = url?.normalized(),
 			website.url.normalized() != url
 		{

@@ -7,25 +7,6 @@ extension AppState {
 			updateMenu()
 		}
 
-		webViewController.didLoadPublisher
-			.convertToResult()
-			.sink { [self] result in
-				switch result {
-				case .success:
-					// Set the persisted zoom level.
-					// This must be here as `webView.url` needs to have been set.
-					let zoomLevel = webViewController.webView.zoomLevelWrapper
-					if zoomLevel != 1 {
-						webViewController.webView.zoomLevelWrapper = zoomLevel
-					}
-
-					statusItemButton.toolTip = WebsitesController.shared.current?.tooltip
-				case .failure(let error):
-					webViewError = error
-				}
-			}
-			.store(in: &cancellables)
-
 		powerSourceWatcher?.didChangePublisher
 			.sink { [self] _ in
 				guard Defaults[.deactivateOnBattery] else {
@@ -53,7 +34,7 @@ extension AppState {
 			.receive(on: DispatchQueue.main)
 			.sink { [self] in
 				resetTimer()
-				recreateWebViewAndReload()
+				updateWebsites()
 
 				// We never destroy the webview, so we have to make sure it's not in browsing mode when there are no websites.
 				if $0.newValue.isEmpty {
@@ -75,21 +56,36 @@ extension AppState {
 			}
 			.store(in: &cancellables)
 
+		Defaults.publisher(.displayWebsites, options: [])
+			.receive(on: DispatchQueue.main)
+			.sink { [self] _ in
+				updateWebsites()
+			}
+			.store(in: &cancellables)
+
+		Defaults.publisher(.disabledDisplays, options: [])
+			.sink { [self] _ in
+				updateInstances()
+			}
+			.store(in: &cancellables)
+
+		NSScreen.publisher
+			.sink { [self] in
+				updateInstances()
+			}
+			.store(in: &cancellables)
+
 		Defaults.publisher(.opacity)
 			.sink { [self] change in
-				desktopWindow.alphaValue = isBrowsingMode ? 1 : change.newValue
+				for instance in instances {
+					instance.window.alphaValue = isBrowsingMode ? 1 : change.newValue
+				}
 			}
 			.store(in: &cancellables)
 
 		Defaults.publisher(.reloadInterval)
 			.sink { [self] _ in
 				resetTimer()
-			}
-			.store(in: &cancellables)
-
-		Defaults.publisher(.display, options: [])
-			.sink { [self] change in
-				desktopWindow.targetDisplay = change.newValue
 			}
 			.store(in: &cancellables)
 
@@ -101,20 +97,24 @@ extension AppState {
 
 		Defaults.publisher(.showOnAllSpaces)
 			.sink { [self] change in
-				desktopWindow.collectionBehavior.toggleExistence(.canJoinAllSpaces, shouldExist: change.newValue)
+				for instance in instances {
+					instance.window.collectionBehavior.toggleExistence(.canJoinAllSpaces, shouldExist: change.newValue)
+				}
 			}
 			.store(in: &cancellables)
 
 		Defaults.publisher(.bringBrowsingModeToFront, options: [])
 			.sink { [self] _ in
-				desktopWindow.isInteractive = desktopWindow.isInteractive
+				for instance in instances {
+					instance.window.isInteractive = instance.window.isInteractive
+				}
 			}
 			.store(in: &cancellables)
 
 		Defaults.publisher(.muteAudio, options: [])
 			.receive(on: DispatchQueue.main)
 			.sink { [self] _ in
-				recreateWebViewAndReload()
+				recreateWebViewsAndReload()
 			}
 			.store(in: &cancellables)
 
@@ -130,16 +130,17 @@ extension AppState {
 			reloadWebsite()
 		}
 
-		KeyboardShortcuts.onKeyUp(for: .nextWebsite) {
-			WebsitesController.shared.makeNextCurrent()
+		// These apply to the display with the mouse pointer.
+		KeyboardShortcuts.onKeyUp(for: .nextWebsite) { [self] in
+			WebsitesController.shared.makeNextCurrent(for: targetDisplay)
 		}
 
-		KeyboardShortcuts.onKeyUp(for: .previousWebsite) {
-			WebsitesController.shared.makePreviousCurrent()
+		KeyboardShortcuts.onKeyUp(for: .previousWebsite) { [self] in
+			WebsitesController.shared.makePreviousCurrent(for: targetDisplay)
 		}
 
-		KeyboardShortcuts.onKeyUp(for: .randomWebsite) {
-			WebsitesController.shared.makeRandomCurrent()
+		KeyboardShortcuts.onKeyUp(for: .randomWebsite) { [self] in
+			WebsitesController.shared.makeRandomCurrent(for: targetDisplay)
 		}
 	}
 }

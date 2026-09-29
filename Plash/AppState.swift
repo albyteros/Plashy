@@ -19,11 +19,33 @@ final class AppState: ObservableObject {
 
 	private(set) lazy var statusItemButton = statusItem.button!
 
-	private(set) lazy var webViewController = WebViewController()
+	/**
+	The desktop windows, one for each display Plash shows on.
+	*/
+	private(set) var instances = [DesktopInstance]()
 
-	private(set) lazy var desktopWindow = with(DesktopWindow(display: Defaults[.display])) {
-		$0.contentView = webViewController.webView
-		$0.contentView?.isHidden = true
+	/**
+	The displays Plash currently shows on.
+	*/
+	var activeDisplays: [Display] { instances.map(\.display) }
+
+	/**
+	The display the mouse pointer is on, which is the display that keyboard shortcuts and menu actions apply to.
+
+	Falls back to the main display.
+	*/
+	var targetDisplay: Display? {
+		let mouseLocation = NSEvent.mouseLocation
+
+		if
+			let screen = (NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }),
+			let display = Display(screen: screen),
+			activeDisplays.contains(display)
+		{
+			return display
+		}
+
+		return activeDisplays.first { $0 == Display.main } ?? activeDisplays.first
 	}
 
 	var isBrowsingMode = false {
@@ -32,8 +54,11 @@ final class AppState: ObservableObject {
 				return
 			}
 
-			desktopWindow.isInteractive = isBrowsingMode
-			desktopWindow.alphaValue = isBrowsingMode ? 1 : Defaults[.opacity]
+			for instance in instances {
+				instance.window.isInteractive = isBrowsingMode
+				instance.window.alphaValue = isBrowsingMode ? 1 : Defaults[.opacity]
+			}
+
 			resetTimer()
 		}
 	}
@@ -43,13 +68,17 @@ final class AppState: ObservableObject {
 			resetTimer()
 			statusItemButton.appearsDisabled = !isEnabled
 
-			if isEnabled {
-				loadUserURL()
-				desktopWindow.makeKeyAndOrderFront(self)
-			} else {
-				// TODO: Properly unload the web view instead of just clearing and hiding it.
-				desktopWindow.orderOut(self)
-				loadURL("about:blank")
+			for instance in instances {
+				if isEnabled {
+					// The website for the display might have changed while disabled.
+					if !instance.update() {
+						instance.loadWebsite()
+					}
+
+					instance.show()
+				} else {
+					instance.hide()
+				}
 			}
 		}
 	}
@@ -64,26 +93,12 @@ final class AppState: ObservableObject {
 
 	var reloadTimer: Timer?
 
-	var webViewError: Error? {
-		didSet {
-			if let webViewError {
-				statusItemButton.toolTip = "Error: \(webViewError.localizedDescription)"
-
-				// TODO: There's a macOS bug that makes it black instead of a color.
-//				statusItemButton.contentTintColor = .systemRed
-
-				// TODO: Also present the error when the user just added it from the input box as then it's also "interactive".
-				if
-					isBrowsingMode,
-					!webViewError.localizedDescription.contains("No internet connection")
-				{
-					webViewError.presentAsModal()
-				}
-
-				return
-			}
-
-			statusItemButton.contentTintColor = nil
+	/**
+	The errors of the websites that failed to load, keyed by display.
+	*/
+	var webViewErrors: [(display: Display, error: Error)] {
+		instances.compactMap { instance in
+			instance.error.map { (instance.display, $0) }
 		}
 	}
 
@@ -95,7 +110,8 @@ final class AppState: ObservableObject {
 
 	private func didLaunch() {
 		_ = statusItemButton
-		_ = desktopWindow
+		migrateLegacyDisplaySetting()
+		updateInstances(shouldLoad: false) // The websites are loaded when the enabled state is set in `setUpEvents()`.
 		setUpEvents()
 		showWelcomeScreenIfNeeded()
 
@@ -144,66 +160,129 @@ final class AppState: ObservableObject {
 		}
 	}
 
-	func recreateWebView() {
-		webViewController.recreateWebView()
-		desktopWindow.contentView = webViewController.webView
+	/**
+	Moves the old single display setting to the list of disabled displays.
+	*/
+	private func migrateLegacyDisplaySetting() {
+		guard let legacyDisplay = Defaults[.legacyDisplay] else {
+			return
+		}
+
+		Defaults[.disabledDisplays] = Display.all
+			.filter { $0 != legacyDisplay }
+			.map(\.id.uuidString)
+
+		Defaults.reset(.legacyDisplay)
 	}
 
-	func recreateWebViewAndReload() {
-		recreateWebView()
-		loadUserURL()
+	/**
+	Creates and removes desktop windows to match the connected and enabled displays.
+
+	- Parameter shouldLoad: Whether to load the website in newly created windows.
+	*/
+	func updateInstances(shouldLoad: Bool = true) {
+		let disabledDisplays = Set(Defaults[.disabledDisplays])
+		let displays = Display.all.filter { !disabledDisplays.contains($0.id.uuidString) }
+
+		for instance in instances where !displays.contains(instance.display) {
+			instance.close()
+		}
+
+		instances.removeAll { !displays.contains($0.display) }
+
+		for display in displays where !activeDisplays.contains(display) {
+			let instance = DesktopInstance(display: display)
+			instances.append(instance)
+			configure(instance, shouldLoad: shouldLoad)
+		}
+
+		updateStatusItemToolTip()
+	}
+
+	private func configure(_ instance: DesktopInstance, shouldLoad: Bool) {
+		instance.window.collectionBehavior.toggleExistence(.canJoinAllSpaces, shouldExist: Defaults[.showOnAllSpaces])
+
+		guard
+			shouldLoad,
+			isEnabled
+		else {
+			return
+		}
+
+		instance.window.isInteractive = isBrowsingMode
+		instance.window.alphaValue = isBrowsingMode ? 1 : Defaults[.opacity]
+		instance.loadWebsite()
+		instance.show()
+	}
+
+	func updateStatusItemToolTip() {
+		if !webViewErrors.isEmpty {
+			statusItemButton.toolTip = webViewErrors
+				.map { instances.count > 1 ? "\($0.display.localizedName): \($0.error.localizedDescription)" : "Error: \($0.error.localizedDescription)" }
+				.joined(separator: "\n")
+
+			// TODO: There's a macOS bug that makes it black instead of a color.
+//			statusItemButton.contentTintColor = .systemRed
+
+			return
+		}
+
+		statusItemButton.contentTintColor = nil
+
+		guard instances.count > 1 else {
+			statusItemButton.toolTip = instances.first?.website?.tooltip
+			return
+		}
+
+		statusItemButton.toolTip = instances
+			.compactMap { instance in
+				instance.website.map { "\(instance.display.localizedName): \($0.menuTitle)" }
+			}
+			.joined(separator: "\n")
+	}
+
+	/**
+	Recreates the web views whose website changed, and reloads them.
+	*/
+	func updateWebsites() {
+		guard isEnabled else {
+			return
+		}
+
+		for instance in instances {
+			instance.update()
+		}
+	}
+
+	func recreateWebViewsAndReload() {
+		for instance in instances {
+			if isEnabled {
+				instance.update(force: true)
+			} else {
+				// It will be loaded when enabled.
+				instance.recreateWebView()
+			}
+		}
 	}
 
 	func reloadWebsite() {
 		loadUserURL()
 	}
 
+	/**
+	Reloads the website on all displays.
+	*/
 	func loadUserURL() {
-		loadURL(WebsitesController.shared.current?.url)
+		for instance in instances {
+			instance.loadWebsite()
+		}
 	}
 
 	func toggleBrowsingMode() {
 		Defaults[.isBrowsingMode].toggle()
 	}
 
-	func loadURL(_ url: URL?) {
-		webViewError = nil
-
-		guard
-			var url,
-			url.isValid
-		else {
-			return
-		}
-
-		do {
-			url = try replacePlaceholders(of: url) ?? url
-		} catch {
-			error.presentAsModal()
-			return
-		}
-
-		webViewController.loadURL(url)
-
-		// TODO: Add a callback to `loadURL` when it's done loading instead.
-		// TODO: Fade in the web view.
-		delay(.seconds(1)) { [self] in
-			desktopWindow.contentView?.isHidden = false
-		}
-	}
-
-	/**
-	Replaces app-specific placeholder strings in the given URL with a corresponding value.
-	*/
-	func replacePlaceholders(of url: URL) throws -> URL? {
-		// Here we swap out `[[screenWidth]]` and `[[screenHeight]]` for their actual values.
-		// We proceed only if we have an `NSScreen` to work with.
-		guard let screen = desktopWindow.targetDisplay?.screen ?? .main else {
-			return nil
-		}
-
-		return try url
-			.replacingPlaceholder("[[screenWidth]]", with: String(format: "%.0f", screen.frameWithoutStatusBar.width))
-			.replacingPlaceholder("[[screenHeight]]", with: String(format: "%.0f", screen.frameWithoutStatusBar.height))
+	func instance(for display: Display) -> DesktopInstance? {
+		instances.first { $0.display == display }
 	}
 }

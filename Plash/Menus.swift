@@ -2,22 +2,28 @@ import Cocoa
 
 extension AppState {
 	private func addInfoMenuItem() {
-		guard let website = WebsitesController.shared.current else {
-			return
-		}
-
-		var url = website.url
-		do {
-			url = try replacePlaceholders(of: url) ?? url
-		} catch {
-			error.presentAsModal()
-			return
-		}
-
 		let maxLength = 30
 
-		if !website.menuTitle.isEmpty {
+		guard instances.count > 1 else {
+			guard
+				let website = instances.first?.website,
+				!website.menuTitle.isEmpty
+			else {
+				return
+			}
+
 			let menuItem = menu.addDisabled(website.menuTitle.truncating(to: maxLength))
+			menuItem.toolTip = website.tooltip
+
+			return
+		}
+
+		for instance in instances {
+			guard let website = instance.website else {
+				continue
+			}
+
+			let menuItem = menu.addDisabled("\(instance.display.localizedName.truncating(to: 20)): \(website.menuTitle.truncating(to: maxLength))")
 			menuItem.toolTip = website.tooltip
 		}
 	}
@@ -25,16 +31,57 @@ extension AppState {
 	private func createSwitchMenu() -> SSMenu {
 		let menu = SSMenu()
 
-		for website in WebsitesController.shared.all {
-			let menuItem = menu.addCallbackItem(
-				website.menuTitle.truncating(to: 40),
-				isChecked: website.isCurrent
-			) {
-				website.makeCurrent()
+		guard instances.count > 1 else {
+			let display = instances.first?.display
+
+			for website in WebsitesController.shared.all {
+				let menuItem = menu.addCallbackItem(
+					website.menuTitle.truncating(to: 40),
+					isChecked: display.map { WebsitesController.shared.current(for: $0)?.id == website.id } ?? website.isCurrent
+				) {
+					if let display {
+						WebsitesController.shared.setCurrent(website, for: display)
+					} else {
+						website.makeCurrent()
+					}
+				}
+
+				menuItem.toolTip = website.tooltip
 			}
 
-			menuItem.toolTip = website.tooltip
+			return menu
 		}
+
+		for instance in instances {
+			let display = instance.display
+			menu.addItem(.sectionHeader(title: display.localizedName))
+
+			for website in WebsitesController.shared.all {
+				let menuItem = menu.addCallbackItem(
+					website.menuTitle.truncating(to: 40),
+					isChecked: instance.website?.id == website.id
+				) {
+					WebsitesController.shared.setCurrent(website, for: display)
+				}
+
+				menuItem.toolTip = website.tooltip
+			}
+
+			menu.addSeparator()
+		}
+
+		menu.addItem("All Displays")
+			.withSubmenu { submenu in
+				for website in WebsitesController.shared.all {
+					let menuItem = submenu.addCallbackItem(website.menuTitle.truncating(to: 40)) {
+						WebsitesController.shared.showOnAllDisplays(website)
+					}
+
+					menuItem.toolTip = website.tooltip
+				}
+
+				return submenu
+			}
 
 		return menu
 	}
@@ -72,8 +119,13 @@ extension AppState {
 	}
 
 	private func addWebsiteItems() {
-		if let webViewError {
-			menu.addDisabled("Error: \(webViewError.localizedDescription)".wordWrapped(atLength: 36).toNSAttributedString)
+		let webViewErrors = webViewErrors
+		if !webViewErrors.isEmpty {
+			for (display, error) in webViewErrors {
+				let prefix = instances.count > 1 ? "\(display.localizedName): " : ""
+				menu.addDisabled("\(prefix)Error: \(error.localizedDescription)".wordWrapped(atLength: 36).toNSAttributedString)
+			}
+
 			menu.addSeparator()
 		}
 
@@ -111,29 +163,32 @@ extension AppState {
 			menu.addCallbackItem(
 				"Edit…",
 				isEnabled: WebsitesController.shared.current != nil
-			) {
+			) { [self] in
+				let website = targetDisplay.flatMap { WebsitesController.shared.current(for: $0) } ?? WebsitesController.shared.current
+
 				Constants.openWebsitesWindow()
 
 				// TODO: Find a better way to do this.
-				NotificationCenter.default.post(name: .showEditWebsiteDialog, object: nil)
+				NotificationCenter.default.post(name: .showEditWebsiteDialog, object: website?.id)
 			}
 		}
 
 		menu.addSeparator()
 
 		if WebsitesController.shared.all.count > 1 {
-			menu.addCallbackItem("Next") {
-				WebsitesController.shared.makeNextCurrent()
+			// With multiple displays, these apply to the display with the mouse pointer, which is where the menu was opened.
+			menu.addCallbackItem("Next") { [self] in
+				WebsitesController.shared.makeNextCurrent(for: targetDisplay)
 			}
 			.setShortcut(for: .nextWebsite)
 
-			menu.addCallbackItem("Previous") {
-				WebsitesController.shared.makePreviousCurrent()
+			menu.addCallbackItem("Previous") { [self] in
+				WebsitesController.shared.makePreviousCurrent(for: targetDisplay)
 			}
 			.setShortcut(for: .previousWebsite)
 
-			menu.addCallbackItem("Random") {
-				WebsitesController.shared.makeRandomCurrent()
+			menu.addCallbackItem("Random") { [self] in
+				WebsitesController.shared.makeRandomCurrent(for: targetDisplay)
 			}
 			.setShortcut(for: .randomWebsite)
 

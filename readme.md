@@ -39,7 +39,7 @@ Plash enables you to have a highly dynamic desktop wallpaper. You could display 
 - Interact with the website (“Browsing Mode”)
 - Automatically reload the website at a custom interval
 - Add multiple websites
-- Show the website on a different display
+- Show a different website on each display
 - Invert website colors (fake dark mode)
 - Add custom CSS and JavaScript to the website
 - Lower the opacity
@@ -136,6 +136,12 @@ For example, to reload the current website, run this terminal command:
 $ open -g plash:reload
 ```
 
+The `reload`, `next`, `previous`, and `random` commands accept an optional `display` parameter, either the display's position (starting at 1) or its name. Without it, `reload` applies to all displays, and the others apply to the main display and any display that has not been given its own website.
+
+```console
+$ open -g 'plash:next?display=2'
+```
+
 ## Share extension
 
 Plash comes bundled with a [share extension](https://support.apple.com/guide/mac-help/use-the-share-menu-on-mac-mh40614/mac). You can, for example, use it to quickly add a website you have open in Safari to Plash.
@@ -168,6 +174,12 @@ Reload the current website.
 
 ```console
 $ open -g plash:reload
+```
+
+The `reload`, `next`, `previous`, and `random` commands accept an optional `display` parameter, either the display's position (starting at 1) or its name. Without it, `reload` applies to all displays, and the others apply to the main display and any display that has not been given its own website.
+
+```console
+$ open -g 'plash:next?display=2'
 ```
 
 #### `next`
@@ -252,7 +264,11 @@ Plash can be automated with the built-in Shortcuts app, for example, using the �
 
 #### Does it support multiple displays?
 
-Support for multiple displays is currently limited to the ability to choose which display to show the website on. Support for setting a separate website for each display is [planned](https://github.com/sindresorhus/Plash/issues/2).
+Yes. Each display can show a different website. In the “Websites” window, right-click a website and choose “Show On” to pick the display, or “All Displays”. You can choose which displays Plash shows on in the settings.
+
+Displays that have not been given a website show the same website as the main display.
+
+The “Next”, “Previous”, and “Random” menu items and keyboard shortcuts apply to the display with the mouse pointer.
 
 However, I there is a [workaround](https://github.com/sindresorhus/Plash/issues/2#issuecomment-653891524).
 

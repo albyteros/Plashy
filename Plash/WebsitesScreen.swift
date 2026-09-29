@@ -3,6 +3,8 @@ import SwiftUI
 struct WebsitesScreen: View {
 	@Environment(\.requestReview) private var requestReview
 	@Default(.websites) private var websites
+	@Default(.displayWebsites) private var displayWebsites
+	@Default(.disabledDisplays) private var disabledDisplays
 //	@State private var selection: Website.ID? // We need two states as selection must be independent from actually opening the editing because of keyboard navigation and accessibility.
 	@State private var editedWebsite: Website.ID?
 	@State private var isAddWebsiteDialogPresented = false
@@ -16,7 +18,7 @@ struct WebsitesScreen: View {
 					selection: $editedWebsite
 				)
 			}
-			.id(websites) // Workaround for the row not updating when changing the current active website. It's placed here and not on the row to prevent another issue where adding a new website makes it scroll outside the view. (macOS 15.3)
+			.id([websites.hashValue, displayWebsites.hashValue, disabledDisplays.hashValue]) // Workaround for the row not updating when changing the current active website. It's placed here and not on the row to prevent another issue where adding a new website makes it scroll outside the view. (macOS 15.3)
 //			.onKeyboardShortcut(.defaultAction) {
 //				editedWebsite = selection
 //			}
@@ -60,8 +62,8 @@ struct WebsitesScreen: View {
 		.onNotification(.showAddWebsiteDialog) { _ in
 			isAddWebsiteDialogPresented = true
 		}
-		.onNotification(.showEditWebsiteDialog) { _ in
-			editedWebsite = WebsitesController.shared.current?.id
+		.onNotification(.showEditWebsiteDialog) {
+			editedWebsite = $0.object as? Website.ID ?? WebsitesController.shared.current?.id
 		}
 		.toolbar {
 			Button("Add Website", systemImage: "plus") {
@@ -85,6 +87,25 @@ private struct RowView: View {
 	@Binding var website: Website
 	@Binding var selection: Website.ID?
 
+	private var isMultiDisplay: Bool { AppState.shared.instances.count > 1 }
+
+	private var isShown: Bool {
+		AppState.shared.instances.isEmpty ? website.isCurrent : !WebsitesController.shared.displays(showing: website).isEmpty
+	}
+
+	/**
+	With a single display, shows the website on it. With multiple displays, shows it on the main display and the displays that have not been given their own website.
+	*/
+	private func setAsCurrent() {
+		let displays = AppState.shared.activeDisplays
+
+		if displays.count == 1, let display = displays.first {
+			WebsitesController.shared.setCurrent(website, for: display)
+		} else {
+			website.makeCurrent()
+		}
+	}
+
 	var body: some View {
 		HStack {
 			Label {
@@ -98,7 +119,18 @@ private struct RowView: View {
 			}
 			.lineLimit(1)
 			Spacer()
-			if website.isCurrent {
+			if isMultiDisplay {
+				let displays = WebsitesController.shared.displays(showing: website)
+				if !displays.isEmpty {
+					Text(displays.map(\.localizedName).formatted(.list(type: .and)))
+						.font(.caption)
+						.foregroundStyle(.secondary)
+						.lineLimit(2)
+						.multilineTextAlignment(.trailing)
+						.frame(maxWidth: 120, alignment: .trailing)
+				}
+			}
+			if isShown {
 				Image(systemName: "checkmark.circle.fill")
 					.renderingMode(.original)
 					.font(.title2)
@@ -109,19 +141,34 @@ private struct RowView: View {
 		.help(website.tooltip)
 		.swipeActions(edge: .leading, allowsFullSwipe: true) {
 			Button("Set as Current") {
-				website.makeCurrent()
+				setAsCurrent()
 			}
-			.disabled(website.isCurrent)
+			.disabled(isMultiDisplay ? website.isCurrent : isShown)
 		}
 		.contentShape(.rect)
 		.onDoubleClick {
 			selection = website.id
 		}
 		.contextMenu { // Must come after `.onDoubleClick`.
-			Button("Set as Current") {
-				website.makeCurrent()
+			if isMultiDisplay {
+				Menu("Show On") {
+					Button("All Displays") {
+						WebsitesController.shared.showOnAllDisplays(website)
+					}
+					Divider()
+					ForEach(AppState.shared.activeDisplays) { display in
+						Button(display.localizedName) {
+							WebsitesController.shared.setCurrent(website, for: display)
+						}
+						.disabled(WebsitesController.shared.current(for: display)?.id == website.id)
+					}
+				}
+			} else {
+				Button("Set as Current") {
+					setAsCurrent()
+				}
+				.disabled(isShown)
 			}
-			.disabled(website.isCurrent)
 			Divider()
 			Button("Edit…") {
 				selection = website.id
@@ -133,7 +180,7 @@ private struct RowView: View {
 		}
 		.accessibilityElement(children: .combine)
 		.accessibilityAddTraits(.isButton)
-		.if(website.isCurrent) {
+		.if(isShown) {
 			$0.accessibilityAddTraits(.isSelected)
 		}
 		.accessibilityAction(named: "Edit") { // Doesn't show up in accessibility actions. (macOS 14.0)

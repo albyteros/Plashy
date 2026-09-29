@@ -119,33 +119,58 @@ struct GetCurrentWebsiteIntent: AppIntent {
 	static let title: LocalizedStringResource = "Get Current Website"
 
 	static let description = IntentDescription(
-		"Returns the current website in Plash.",
+		"Returns the current website in Plash. If a display is given, returns the website on that display.",
 		resultValueName: "Current Website"
 	)
+
+	@Parameter(title: "Display")
+	var display: DisplayAppEntity?
+
+	static var parameterSummary: some ParameterSummary {
+		Summary("Get the current website") {
+			\.$display
+		}
+	}
 
 	@MainActor
 	func perform() async throws -> some IntentResult & ReturnsValue<WebsiteAppEntity?> {
 		ensureRunning()
-		return .result(value: WebsitesController.shared.current.flatMap { .init($0) })
+		let website = display?.toNative.flatMap { WebsitesController.shared.current(for: $0) } ?? WebsitesController.shared.current
+		return .result(value: website.flatMap { .init($0) })
 	}
 }
 
 struct SetCurrentWebsiteIntent: AppIntent {
 	static let title: LocalizedStringResource = "Set Current Website"
 
-	static let description = IntentDescription("Sets the current website in Plash to the given website.")
+	static let description = IntentDescription("Sets the current website in Plash to the given website. If a display is given, only sets it for that display.")
 
 	@Parameter(title: "Website")
 	var website: WebsiteAppEntity
 
+	@Parameter(title: "Display")
+	var display: DisplayAppEntity?
+
 	static var parameterSummary: some ParameterSummary {
-		Summary("Set current website to \(\.$website)")
+		Summary("Set current website to \(\.$website)") {
+			\.$display
+		}
 	}
 
 	@MainActor
 	func perform() async throws -> some IntentResult {
 		ensureRunning()
-		WebsitesController.shared.current = website.toNative
+
+		guard let website = website.toNative else {
+			return .result()
+		}
+
+		if let display = display?.toNative {
+			WebsitesController.shared.setCurrent(website, for: display)
+		} else {
+			WebsitesController.shared.current = website
+		}
+
 		return .result()
 	}
 }
@@ -153,12 +178,27 @@ struct SetCurrentWebsiteIntent: AppIntent {
 struct ReloadWebsiteIntent: AppIntent {
 	static let title: LocalizedStringResource = "Reload Website"
 
-	static let description = IntentDescription("Reloads the current website in Plash.")
+	static let description = IntentDescription("Reloads the current website in Plash. If a display is given, only reloads the website on that display.")
+
+	@Parameter(title: "Display")
+	var display: DisplayAppEntity?
+
+	static var parameterSummary: some ParameterSummary {
+		Summary("Reload website") {
+			\.$display
+		}
+	}
 
 	@MainActor
 	func perform() async throws -> some IntentResult {
 		ensureRunning()
-		AppState.shared.reloadWebsite()
+
+		if let display = display?.toNative {
+			AppState.shared.instance(for: display)?.loadWebsite()
+		} else {
+			AppState.shared.reloadWebsite()
+		}
+
 		return .result()
 	}
 }
@@ -166,12 +206,21 @@ struct ReloadWebsiteIntent: AppIntent {
 struct NextWebsiteIntent: AppIntent {
 	static let title: LocalizedStringResource = "Switch to Next Website"
 
-	static let description = IntentDescription("Switches Plash to the next website in the list.")
+	static let description = IntentDescription("Switches Plash to the next website in the list. If a display is given, only switches the website on that display.")
+
+	@Parameter(title: "Display")
+	var display: DisplayAppEntity?
+
+	static var parameterSummary: some ParameterSummary {
+		Summary("Switch to next website") {
+			\.$display
+		}
+	}
 
 	@MainActor
 	func perform() async throws -> some IntentResult {
 		ensureRunning()
-		WebsitesController.shared.makeNextCurrent()
+		WebsitesController.shared.makeNextCurrent(for: display?.toNative)
 		return .result()
 	}
 }
@@ -179,12 +228,21 @@ struct NextWebsiteIntent: AppIntent {
 struct PreviousWebsiteIntent: AppIntent {
 	static let title: LocalizedStringResource = "Switch to Previous Website"
 
-	static let description = IntentDescription("Switches Plash to the previous website in the list.")
+	static let description = IntentDescription("Switches Plash to the previous website in the list. If a display is given, only switches the website on that display.")
+
+	@Parameter(title: "Display")
+	var display: DisplayAppEntity?
+
+	static var parameterSummary: some ParameterSummary {
+		Summary("Switch to previous website") {
+			\.$display
+		}
+	}
 
 	@MainActor
 	func perform() async throws -> some IntentResult {
 		ensureRunning()
-		WebsitesController.shared.makePreviousCurrent()
+		WebsitesController.shared.makePreviousCurrent(for: display?.toNative)
 		return .result()
 	}
 }
@@ -192,12 +250,21 @@ struct PreviousWebsiteIntent: AppIntent {
 struct RandomWebsiteIntent: AppIntent {
 	static let title: LocalizedStringResource = "Switch to Random Website"
 
-	static let description = IntentDescription("Switches Plash to a random website in the list.")
+	static let description = IntentDescription("Switches Plash to a random website in the list. If a display is given, only switches the website on that display.")
+
+	@Parameter(title: "Display")
+	var display: DisplayAppEntity?
+
+	static var parameterSummary: some ParameterSummary {
+		Summary("Switch to random website") {
+			\.$display
+		}
+	}
 
 	@MainActor
 	func perform() async throws -> some IntentResult {
 		ensureRunning()
-		WebsitesController.shared.makeRandomCurrent()
+		WebsitesController.shared.makeRandomCurrent(for: display?.toNative)
 		return .result()
 	}
 }
@@ -284,6 +351,55 @@ extension WebsiteAppEntity {
 				$0.title.localizedCaseInsensitiveContains(query)
 					|| $0.url.absoluteString.localizedCaseInsensitiveContains(query)
 			}
+		}
+	}
+}
+
+struct DisplayAppEntity: AppEntity {
+	static let typeDisplayRepresentation: TypeDisplayRepresentation = "Display"
+
+	static let defaultQuery = Query()
+
+	let id: UUID
+
+	@Property(title: "Name")
+	var name: String
+
+	init(_ display: Display) {
+		self.id = display.id
+		self.name = display.localizedName
+	}
+
+	var displayRepresentation: DisplayRepresentation {
+		.init(title: "\(name)")
+	}
+}
+
+extension DisplayAppEntity {
+	@MainActor
+	var toNative: Display? {
+		Display.all.first { $0.id == id }
+	}
+}
+
+extension DisplayAppEntity {
+	struct Query: EnumerableEntityQuery {
+		static let findIntentDescription = IntentDescription(
+			"Returns the displays connected to the Mac.",
+			resultValueName: "Displays"
+		)
+
+		@MainActor
+		func allEntities() async -> [DisplayAppEntity] {
+			Display.all.map(DisplayAppEntity.init)
+		}
+
+		func suggestedEntities() async throws -> [DisplayAppEntity] {
+			await allEntities()
+		}
+
+		func entities(for identifiers: [DisplayAppEntity.ID]) async throws -> [DisplayAppEntity] {
+			await allEntities().filter { identifiers.contains($0.id) }
 		}
 	}
 }

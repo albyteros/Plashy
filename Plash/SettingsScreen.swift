@@ -1,6 +1,7 @@
 import SwiftUI
 import LaunchAtLogin
 import KeyboardShortcuts
+import WebKit
 
 struct SettingsScreen: View {
 	var body: some View {
@@ -186,30 +187,24 @@ private struct HideMenuBarIconSetting: View {
 
 private struct DisplaySetting: View {
 	@ObservedObject private var displayWrapper = Display.observable
-	@Default(.display) private var chosenDisplay
+	@Default(.disabledDisplays) private var disabledDisplays
 
 	var body: some View {
-		Picker(
-			selection: $chosenDisplay.getMap(\.?.withFallbackToMain)
-		) {
-			ForEach(displayWrapper.wrappedValue.all) { display in
-				Text(display.localizedName)
-					.tag(display)
-					// A view cannot have multiple tags, otherwise, this would have been the best solution.
-//					.if(display == .main) {
-//						$0.tag(nil as Display?)
-//					}
-			}
-		} label: {
-			Text("Show on")
-			Link("Multi-display support ›", destination: "https://github.com/sindresorhus/Plash/issues/2")
-		}
-		.task(id: chosenDisplay) {
-			guard chosenDisplay == nil else {
-				return
-			}
-
-			chosenDisplay = .main
+		ForEach(displayWrapper.wrappedValue.all) { display in
+			Toggle(
+				"Show on “\(display.localizedName)”",
+				isOn: .init(
+					get: { !disabledDisplays.contains(display.id.uuidString) },
+					set: { isEnabled in
+						if isEnabled {
+							disabledDisplays.removeAll { $0 == display.id.uuidString }
+						} else {
+							disabledDisplays.append(display.id.uuidString)
+						}
+					}
+				)
+			)
+			.help("Choose which website each display shows in the “Websites” window.")
 		}
 	}
 }
@@ -223,7 +218,7 @@ private struct ClearWebsiteDataSetting: View {
 			Task {
 				hasCleared = true
 				WebsitesController.shared.thumbnailCache.removeAllImages()
-				await AppState.shared.webViewController.webView.clearWebsiteData()
+				await (AppState.shared.instances.first?.webView ?? WKWebView()).clearWebsiteData()
 			}
 		}
 		.help("Clears all cookies, local storage, caches, etc.")

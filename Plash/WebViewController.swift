@@ -14,6 +14,21 @@ final class WebViewController: NSViewController {
 
 	var response: HTTPURLResponse?
 
+	/**
+	The website this web view shows. Its custom CSS, JavaScript, and options are applied when the web view is created.
+	*/
+	var website: Website?
+
+	init(website: Website?) {
+		self.website = website
+		super.init(nibName: nil, bundle: nil)
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) {
+		fatalError("init(coder:) has not been implemented")
+	}
+
 	private func createWebView() -> SSWebView {
 		let configuration = WKWebViewConfiguration()
 		configuration.allowsAirPlayForMediaPlayback = false
@@ -45,7 +60,9 @@ final class WebViewController: NSViewController {
 
 		userContentController.addJavaScript("document.documentElement.classList.add('is-plash-app')")
 
-		if let website = WebsitesController.shared.current {
+		webView.website = website
+
+		if let website {
 			if website.invertColors2 != .never {
 				userContentController.invertColors(
 					onlyWhenInDarkMode: website.invertColors2 == .darkMode
@@ -186,7 +203,7 @@ extension WebViewController: WKNavigationDelegate {
 		// We're intentionally allowing this in non-browsing mode as loading the URL would fail otherwise.
 		await webView.defaultAuthChallengeHandler(
 			challenge: challenge,
-			allowSelfSignedCertificate: WebsitesController.shared.current?.allowSelfSignedCertificate ?? false
+			allowSelfSignedCertificate: website?.allowSelfSignedCertificate ?? false
 		)
 	}
 
