@@ -358,7 +358,7 @@ extension WebsiteAppEntity {
 struct DisplayAppEntity: AppEntity {
 	static let typeDisplayRepresentation: TypeDisplayRepresentation = "Display"
 
-	static let defaultQuery = Query()
+	static let defaultQuery = DisplayQuery()
 
 	let id: UUID
 
@@ -383,7 +383,7 @@ extension DisplayAppEntity {
 }
 
 extension DisplayAppEntity {
-	struct Query: EnumerableEntityQuery {
+	struct DisplayQuery: EnumerableEntityQuery {
 		static let findIntentDescription = IntentDescription(
 			"Returns the displays connected to the Mac.",
 			resultValueName: "Displays"
